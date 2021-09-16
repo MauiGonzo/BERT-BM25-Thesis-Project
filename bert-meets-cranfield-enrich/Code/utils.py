@@ -240,10 +240,12 @@ def training(model, train_dataloader, device, optimizer, scheduler):
         b_labels = batch[3].to(device)
 
         model.zero_grad()
-        loss, logits = model(b_input_ids,
+        outputs = model(b_input_ids,
                              token_type_ids=b_input_token,
                              attention_mask=b_input_mask,
                              labels=b_labels)
+        loss = outputs.loss
+        logits = outputs.logits
         total_train_loss.append(loss.item())
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
