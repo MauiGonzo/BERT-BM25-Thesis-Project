@@ -344,3 +344,39 @@ def results_to_csv(location, result_list):
     with open(location, "w") as f:
         writer = csv.writer(f)
         writer.writerows(result_list)
+
+        
+# ADDITIONAL utils
+def get_bm25_plus_other_rel(bm25_tn, labels, queries):
+      bm25_top_n_rel_padded = [0]*len(queries) # a bm25_top_n list padded with the remaining relevant documents
+      bm25_top_n_swap = [0]*len(queries) 
+    
+      for qi in range(len(queries)):
+        # get the list of relelvant documents
+        lbi = np.where(labels[qi] == 1)
+        # note this numbering is only compatible with the labels list
+
+
+        # get the list of bm25_top_n
+#         np_bm25_qi_docs = np.array(bm25_top_n[qi]) 
+        np_bm25_qi_docs = np.array(bm25_tn[qi]) 
+
+        # evaluate what relevant documents should be added
+        pad_rel = np.setdiff1d(lbi, np_bm25_qi_docs)
+        # if len(pad_rel) > 0:
+        pad_rel = tuple(pad_rel)
+#         bm25_top_n_rel_padded[qi] = bm25_top_n[qi] + pad_rel
+        bm25_top_n_rel_padded[qi] = bm25_tn[qi] + pad_rel
+        # create a list with least relevant items swapped for unfound relevant
+        for i in range(len(pad_rel)):
+          # CHECK
+          # are we to swap a relevant document?
+          current_doc = np_bm25_qi_docs[-(i+1)] 
+          
+          if np.count_nonzero(current_doc == lbi) > 0:
+            print('Relevant doc overwritten!')
+          # CONTINUE  
+          np_bm25_qi_docs[-(i+1)] = pad_rel[i]
+          
+        bm25_top_n_swap[qi] = np_bm25_qi_docs
+      return bm25_top_n_rel_padded, bm25_top_n_swap
