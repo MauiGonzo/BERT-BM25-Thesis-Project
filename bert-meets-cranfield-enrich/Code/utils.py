@@ -195,7 +195,7 @@ def get_bm25_results(mrr_bm25_list, map_bm25_list, ndcg_bm25_list, test_index, t
     return mrr_bm25, map_bm25, ndcg_bm25, mrr_bm25_list, map_bm25_list, ndcg_bm25_list
 
 
-def model_preparation(MODEL_TYPE, train_dataset, test_dataset, batch_size, batch_size_test, learning_rate, epochs):
+def model_preparation(MODEL_TYPE, train_dataset, test_dataset, batch_size, batch_size_test, learning_rate, epochs, model=None):
     train_dataloader = DataLoader(train_dataset,
                                   sampler=RandomSampler(train_dataset),
                                   batch_size=batch_size)
@@ -204,12 +204,15 @@ def model_preparation(MODEL_TYPE, train_dataset, test_dataset, batch_size, batch
                                  sampler=None,
                                  batch_size=batch_size_test)
 
-    model = BertForSequenceClassification.from_pretrained(
-        MODEL_TYPE,
-        num_labels=2,
-        output_attentions=False,
-        output_hidden_states=False,
-    )
+    if model is None:
+        model = BertForSequenceClassification.from_pretrained(
+            MODEL_TYPE,
+            num_labels=2,
+            output_attentions=False,
+            output_hidden_states=False,
+        )
+    else:
+        model = model
     torch.cuda.empty_cache()
     model.cuda()
 
