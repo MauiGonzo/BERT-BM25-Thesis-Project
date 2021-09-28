@@ -57,7 +57,6 @@ class BertForMultilabelSequenceClassification(BertForSequenceClassification):
         if labels is not None:
             # assume num_labels > 1 (see Huggingface source code how this is otherwise handled)
             device = get_gpu_device(verbose=False)
-            print('custom model, with loss type: ', self.loss_type)
 
             if self.loss_type == 'Default-BCEWIthLogitsLoss':
                 loss_fct = torch.nn.BCEWithLogitsLoss()
