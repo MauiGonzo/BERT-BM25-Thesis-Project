@@ -166,7 +166,7 @@ def mrr_map_ndcg(trec_fold, current_query, query_num, feedback, rel_fed, mrr_tot
         selected_candidates_sorted = multi_label_sel_cand_sorted
         selected_candidates_id = multi_label_sel_cand_id
         selected_candidates = [1 if s + 1 in gold_unsorted else 0 for s in selected_candidates_id]
-
+    
     mrr_current = reciprocal_rank(selected_candidates[:map_cut])
     mrr_list.append(mrr_current)
     mrr_total += mrr_current
@@ -326,7 +326,7 @@ def testing(mode, model, test_dataloader, device, test_index, bm25_top_n, mrr_be
         end_range   = 5
     else:
         begin_range = 1
-        end_range   = 1
+        end_range   = 2
     for label_index in range(begin_range, end_range):
         walker = 0
         mrr_total, map_total, ndcg_total = 0, 0, 0
@@ -372,13 +372,14 @@ def testing(mode, model, test_dataloader, device, test_index, bm25_top_n, mrr_be
                 # TEST split for different sorting
                 m_selected_candidates_notrel = m_selected_candidates[m_selected_candidates['category'] == 0]
                 m_selected_candidates_rel    = m_selected_candidates[m_selected_candidates['category'] > 0]
-                m_selected_candidates_not_rel_sorted = np.sorted(m_selected_candidates_rel, order=['category_score']) 
+                m_selected_candidates_not_rel_sorted = np.sort(m_selected_candidates_notrel, order=['category_score']) 
                 m_selected_candidates_rel_sorted = np.sort(m_selected_candidates_rel, order=['category', 'category_score'])
                 m_selected_candidates_rel_sorted = np.flip(m_selected_candidates_rel_sorted)
-                m_selected_candidates_sorted = np.hstack(m_selected_candidates_rel_sorted, m_selected_candidates_not_rel_sorted)
+                m_selected_candidates_sorted = np.hstack((m_selected_candidates_rel_sorted, m_selected_candidates_not_rel_sorted))
 
                 # the sorting is ascending, flipping it makes the order right
                 # m_selected_candidates_sorted = np.flip(m_selected_candidates_sorted)
+                
                 ####### END TEST
 
                 # set the candidate ids
@@ -388,6 +389,7 @@ def testing(mode, model, test_dataloader, device, test_index, bm25_top_n, mrr_be
                 # m_selected_candidates = [1 if s + 1 in gold_unsorted else 0 for s in m_selected_candidates_id] #oboslete
                 m_selected_candidates_sorted = [(5 - gold[gold_unsorted.index(s + 1)][1]) if (s + 1) in gold_unsorted else 0 for s in
                                   m_selected_candidates_id[:20]]
+                
             else:
                 m_selected_candidates_sorted = None
                 m_selected_candidates_id = None
