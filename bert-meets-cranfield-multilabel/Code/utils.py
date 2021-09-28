@@ -13,6 +13,88 @@ from torch.utils.data import DataLoader, RandomSampler
 import random
 
 
+from transformers.modeling_outputs import SequenceClassifierOutput
+
+class BertForMultilabelSequenceClassification(BertForSequenceClassification):
+    '''
+        overrides class, enabling multiclass labels
+    '''
+
+    def __init__(self, config, loss_type=None):
+        super().__init__(config)
+        self.loss_type=loss_type
+
+
+    def forward(self,
+                input_ids=None,
+                attention_mask=None,
+                token_type_ids=None,
+                position_ids=None,
+                head_mask=None,
+                inputs_embeds=None,
+                labels=None,
+                output_attentions=None,
+                output_hidden_states=None,
+                return_dict=None):
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        outputs = self.bert(input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            position_ids=position_ids,
+                            head_mask=head_mask,
+                            inputs_embeds=inputs_embeds,
+                            output_attentions=output_attentions,
+                            output_hidden_states=output_hidden_states,
+                            return_dict=return_dict)
+
+        pooled_output = outputs[1]
+        # if DROPOUT_ENABLED:
+        #     pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)  # size num_labels, contains all of them
+
+        loss = None
+        if labels is not None:
+            # assume num_labels > 1 (see Huggingface source code how this is otherwise handled)
+            device = get_gpu_device(verbose=False)
+            print('custom model, with loss type: ', self.loss_type)
+
+            if self.loss_type == 'Default-BCEWIthLogitsLoss':
+                loss_fct = torch.nn.BCEWithLogitsLoss()
+                one_hot_label = torch.nn.functional.one_hot(labels, num_classes=self.num_labels)
+                loss = loss_fct(logits.view(-1, self.num_labels),
+                                one_hot_label.float().view(-1, self.num_labels))  # because that is the batch size
+            elif self.loss_type == 'CrossEntropyLoss':
+                tensor_weights = torch.tensor([1.0, 50.0, 50.0, 20.0, 50.0], device=device, dtype=torch.float32) #  values in report
+                # loss_fct = torch.nn.CrossEntropyLoss(weight=tensor_weights ) # default with weight for class imbalance
+                # loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            elif self.loss_type == 'weighted-BCEWIthLogitsLoss':
+                pos_weight = torch.tensor([1.0, 50.0, 50.0, 20.0, 50.0], device=device, dtype=torch.float32) #  values in report
+                loss_fct = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+                one_hot_label = torch.nn.functional.one_hot(labels, num_classes=self.num_labels)
+                loss = loss_fct(logits.view(-1, self.num_labels),
+                                one_hot_label.float().view(-1, self.num_labels))  # because that is the batch size
+            elif self.loss_type == 'HingeLoss':
+                # Hinge Loss expects a one hot labeling and (most probably) expects class probabilities, with sum=1
+                loss_fct = torch.nn.MultiLabelMarginLoss()
+                one_hot_label = torch.nn.functional.one_hot(labels, num_classes=self.num_labels)
+                m = torch.nn.Softmax(dim=1)
+                probabilities = m(logits)
+
+                loss = loss_fct(probabilities.view(-1, self.num_labels),
+                                one_hot_label.long().view(-1, self.num_labels))
+
+        if not return_dict:
+            output = (logits,) + outputs[2:]
+            return ((loss,) + output) if loss is not None else output
+
+        return SequenceClassifierOutput(loss=loss,
+                                        logits=logits,
+                                        hidden_states=outputs.hidden_states,
+                                        attentions=outputs.attentions)
+
+
+
 def initialize_random_generators(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -20,12 +102,14 @@ def initialize_random_generators(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def get_gpu_device():
+def get_gpu_device(verbose=True):
     if torch.cuda.is_available():
-        print('GPU Type:', torch.cuda.get_device_name(0))
+        if verbose:
+            print('GPU Type:', torch.cuda.get_device_name(0))
         return torch.device("cuda")
     else:
-        print('No GPU available, using the CPU instead.')
+        if verbose:
+            print('No GPU available, using the CPU instead.')
         return torch.device("cpu")
 
 
@@ -216,7 +300,8 @@ def get_bm25_results(mrr_bm25_list, map_bm25_list, ndcg_bm25_list, test_index, t
     return mrr_bm25, map_bm25, ndcg_bm25, mrr_bm25_list, map_bm25_list, ndcg_bm25_list
 
 
-def model_preparation(MODEL_TYPE, train_dataset, test_dataset, batch_size, batch_size_test, learning_rate, epochs, model=None, num_labels=2):
+def model_preparation(MODEL_TYPE, train_dataset, test_dataset, batch_size, batch_size_test, learning_rate, epochs, 
+                        model=None, num_labels=2, custom_model=None):
     train_dataloader = DataLoader(train_dataset,
                                   sampler=RandomSampler(train_dataset),
                                   batch_size=batch_size)
@@ -225,13 +310,23 @@ def model_preparation(MODEL_TYPE, train_dataset, test_dataset, batch_size, batch
                                  sampler=None,
                                  batch_size=batch_size_test)
 
-    if model is None:
+    if model is None and custom_model is None:
         model = BertForSequenceClassification.from_pretrained(
             MODEL_TYPE,
             num_labels=num_labels,
             output_attentions=False,
             output_hidden_states=False,
         )
+    elif model is None:
+        if custom_model == 'weighted-BCEWIthLogitsLoss':
+            model = BertForMultilabelSequenceClassification.from_pretrained(
+                MODEL_TYPE,
+                num_labels=5, # because there are five weights
+                output_attentions=False,
+                output_hidden_states=False,
+                loss_type=custom_model
+            )
+        # elif custom_model == 'HingeLoss':
     else:
         model = model
     torch.cuda.empty_cache()
