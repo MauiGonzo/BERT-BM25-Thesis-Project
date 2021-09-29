@@ -92,6 +92,120 @@ class BertForMultilabelSequenceClassification(BertForSequenceClassification):
                                         hidden_states=outputs.hidden_states,
                                         attentions=outputs.attentions)
 
+class BertForMultiTaskSequenceClassification(BertForSequenceClassification):
+    """
+        overrides the class, enabling Multi Task functionality for either
+        * relevant || not relevant
+        * relevance level [0,... num_labels -1] excluding the not relevance class, due to imbalance
+
+        by using ignore_index in CrossEntropyLoss the original feedback can be reused, no extra head needed there
+    """
+
+    def __init__(self, config, loss_type=None, loss1ratio=0.50):
+        super().__init__(config)
+        self.rel_or_not_classifier = torch.nn.Linear(config.hidden_size, 2)
+        # self.rel_level_classifier  = torch.nn.Linear(config.hidden_size, config.num_labels)
+        self.loss_type = loss_type
+        self.loss1ratio = loss1ratio
+
+    def forward(self,
+                input_ids=None,
+                attention_mask=None,
+                token_type_ids=None,
+                position_ids=None,
+                head_mask=None,
+                inputs_embeds=None,
+                labels=None,
+                output_attentions=None,
+                output_hidden_states=None,
+                return_dict=None):
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        outputs = self.bert(input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            position_ids=position_ids,
+                            head_mask=head_mask,
+                            inputs_embeds=inputs_embeds,
+                            output_attentions=output_attentions,
+                            output_hidden_states=output_hidden_states,
+                            return_dict=return_dict)
+
+        pooled_output = outputs[1]
+        # if DROPOUT_ENABLED:
+            # pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)  # size num_labels, contains all of them
+        rel_or_not_logits = self.rel_or_not_classifier(pooled_output)
+        # rel_level_logits  = self.rel_level_classifier(pooled_output)
+
+        loss = None
+        # multitaskloss = 'CELoss'
+        multitaskloss = self.loss_type
+        if labels is not None:
+            # assume num_labels > 1
+            device = get_gpu_device(verbose=False)
+            # rel_weights = torch.tensor([4, 70, 70, 35, 70], device=device, dtype=torch.float32)
+            rel_weights = torch.tensor([1, 18, 18, 9, 18], device=device, dtype=torch.float32)
+            cls_weights = torch.tensor([1, 14], device=device, dtype=torch.float32)
+
+            if multitaskloss == 'hinge':
+                rel_or_not_loss_fct = torch.nn.MultiLabelMarginLoss()
+                loss_fct = torch.nn.MultiLabelMarginLoss()
+                # loss1: rel or not loss
+                rel_or_not_labels = torch.clone(labels)
+                rel_or_not_labels[labels > 0] = 1  # either class 0 or 1
+                one_hot_label = torch.nn.functional.one_hot(rel_or_not_labels, 2)
+                m = torch.nn.Softmax(dim=1)
+                probabilities = m(rel_or_not_logits)
+
+                loss1 = loss_fct(probabilities.view(-1, 2),
+                                one_hot_label.long().view(-1, 2))
+                # loss2: relevance loss
+                one_hot_label = torch.nn.functional.one_hot(labels, self.num_labels)
+                probabilities = m(logits)
+                loss2 = loss_fct(probabilities.view(-1, self.num_labels),
+                                one_hot_label.long().view(-1, self.num_labels))
+            elif multitaskloss == 'CELoss':
+                rel_or_not_loss_fct = torch.nn.CrossEntropyLoss(weight=cls_weights)
+                loss_fct = torch.nn.CrossEntropyLoss(weight=rel_weights, ignore_index=0)
+
+                # create label for the rel_or_not case
+                rel_or_not_labels = torch.clone(labels)
+                rel_or_not_labels[labels > 0] = 1  # either class 0 or 1
+                # if DO_DEBUG:
+                # print('########## DEBUG ##########')
+                # print('labels: ', labels)
+
+                loss1 = rel_or_not_loss_fct(rel_or_not_logits.view(-1, 2), rel_or_not_labels.view(-1))
+                loss2 = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            elif multitaskloss == 'multitask-BCEwLL-5050':
+                rel_or_not_loss_fct = torch.nn.BCEWithLogitsLoss()
+                loss_fct = torch.nn.BCEWithLogitsLoss()
+                #loss1: rel or not loss
+                rel_or_not_labels = torch.clone(labels)
+                rel_or_not_labels[labels > 0] = 1  # either class 0 or 1
+                one_hot_label = torch.nn.functional.one_hot(rel_or_not_labels, 2)
+                loss1 = loss_fct(rel_or_not_logits.view(-1, 2),
+                                one_hot_label.float().view(-1, 2))
+                #loss2: relevance loss
+                one_hot_label = torch.nn.functional.one_hot(labels, 5)
+                loss2 = loss_fct(logits.view(-1,5),one_hot_label.float().view(-1,5))
+
+
+            # combine losses
+            # loss = (loss1 + loss2) / 2
+            # loss = 0.8 * loss1 + 0.2 * loss2
+            loss = self.loss1ratio * loss1 + (1 - self.loss1ratio) * loss2
+
+        if not return_dict:
+            output = (logits,) + outputs[2:]
+            return ((loss,) + output) if loss is not None else output
+
+        return SequenceClassifierOutput(loss=loss,
+                                        logits=logits,
+                                        hidden_states=outputs.hidden_states,
+                                        attentions=outputs.attentions)
+
 
 
 def initialize_random_generators(seed):
@@ -333,6 +447,15 @@ def model_preparation(MODEL_TYPE, train_dataset, test_dataset, batch_size, batch
                 output_hidden_states=False,
                 loss_type=custom_model
         )
+        elif custom_model == 'multitask-BCEwLL-5050':
+            model = BertForMultiTaskSequenceClassification.from_pretrained(
+                MODEL_TYPE,
+                num_labels=5, # because there are five weights
+                output_attentions=False,
+                output_hidden_states=False,
+                loss_type=custom_model,
+                loss1ratio = 0.50
+            )
     else:
         model = model
     torch.cuda.empty_cache()
