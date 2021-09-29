@@ -325,7 +325,14 @@ def model_preparation(MODEL_TYPE, train_dataset, test_dataset, batch_size, batch
                 output_hidden_states=False,
                 loss_type=custom_model
             )
-        # elif custom_model == 'HingeLoss':
+        elif custom_model == 'HingeLoss':
+            model = BertForMultilabelSequenceClassification.from_pretrained(
+                MODEL_TYPE,
+                num_labels=5, # because there are five weights
+                output_attentions=False,
+                output_hidden_states=False,
+                loss_type=custom_model
+        )
     else:
         model = model
     torch.cuda.empty_cache()
