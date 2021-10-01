@@ -178,7 +178,7 @@ class BertForMultiTaskSequenceClassification(BertForSequenceClassification):
 
                 loss1 = rel_or_not_loss_fct(rel_or_not_logits.view(-1, 2), rel_or_not_labels.view(-1))
                 loss2 = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif multitaskloss == 'multitask-BCEwLL-5050':
+            elif multitaskloss == 'multitask-BCEwLL-5050' or multitaskloss == 'multitask-BCEwLL-8020':
                 rel_or_not_loss_fct = torch.nn.BCEWithLogitsLoss()
                 loss_fct = torch.nn.BCEWithLogitsLoss()
                 #loss1: rel or not loss
@@ -455,7 +455,16 @@ def model_preparation(MODEL_TYPE, train_dataset, test_dataset, batch_size, batch
                 output_hidden_states=False,
                 loss_type=custom_model,
                 loss1ratio = 0.50
-            )
+        )
+        elif custom_model == 'multitask-BCEwLL-8020':
+            model = BertForMultiTaskSequenceClassification.from_pretrained(
+                MODEL_TYPE,
+                num_labels=5, # because there are five weights
+                output_attentions=False,
+                output_hidden_states=False,
+                loss_type=custom_model,
+                loss1ratio = 0.80
+        )
     else:
         model = model
     torch.cuda.empty_cache()
